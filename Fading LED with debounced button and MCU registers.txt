@@ -1,0 +1,156 @@
+//This program is designed to control a switch and LED using PWM. The program debounces a switch to ensure that only one press activates power (on/off) for the LED. The program is set up in a way that when the button is toggled once, the LED fades on using PWM and a 50% duty cycle; the LED will remain on until the button is pressed again. When the button is pressed again, the LED will fade off.
+
+//This program also contains a "heartbeat" by utilizing a state machine to control the duration of pulses sent to the built-in LED on board the Arduino Uno.
+
+
+//DDxn and PORTxn = 1 to output high
+//DDxn = 1 and PORTxn = 0 to output low
+//pin 8 is PB0 on microcontroller
+
+
+uint32_t prevTime = 0;
+uint8_t LED_STATUS = LOW;
+uint8_t prevButtonStatus;
+uint8_t currentButtonStatus;
+uint8_t debouncedButtonState = 0;
+
+
+void BuiltinLEDHeartbeatHandler() {
+  static uint8_t state = 0;
+  static unsigned long pTime = 0;
+
+  switch(state) {
+    case 0:
+      if (millis() - pTime >= 950) {
+        pTime = millis();
+        DDRB = (1<<DDB5);
+        PORTB = (1<<PB5);
+        state = 1;
+      }
+        break;
+
+    case 1:
+      if (millis() - pTime >= 50) {
+        pTime = millis();
+        DDRB = (1<<DDB5);
+        PORTB = (0<<PB5);
+        state = 0;
+      }
+        break;
+    }
+}
+
+
+void SwitchDebounceHandler() {
+   uint8_t rawButtonState;
+   static uint32_t pTime = 0;
+   static uint8_t counter = 0;
+
+   if ((micros() - pTime) >= 100) {
+    PINB = (1<<PINB0);
+    rawButtonState = PINB;
+
+    if (rawButtonState != debouncedButtonState) {
+      counter++;
+    }
+    else {
+      counter = 0;
+    }
+
+    if (counter >= 100) {
+      debouncedButtonState = rawButtonState;
+    }
+   }
+}
+
+
+//if led state is high the switch statement counts down from 255 to 0 with button push (fade high to low)
+//if led state is low the switch statement counts up from 0 to 255 with button push (fade low to high)
+
+
+void PwmFadeToggle() {
+  static uint8_t state = 0;
+  static uint32_t rateOfDutyCycle = 10;
+  static uint32_t pTime = 0;
+  static uint8_t prevButtonState = 1;
+
+  if (millis() - pTime >= rateOfDutyCycle) {
+    pTime = millis();
+    switch(state) {
+      case 0: //idle state
+      //if button push and duty cycle = 0
+      if (debouncedButtonState != prevButtonState) {
+        if (debouncedButtonState == 0 && OCR2B == 0) {
+          state = 1;
+        }
+        //if button push and duty cycle = 255
+        if (debouncedButtonState == 0 && OCR2B == 255) {
+          state = 2;
+        }
+        prevButtonState = debouncedButtonState;
+      }
+        break;
+
+      case 1: //ramping up state
+      if (OCR2B == 255) { //duty cycle = 255
+        state = 0;
+      }
+      //increment duty cycle
+      else {
+        OCR2B++;
+      }
+      //if button push then ramp down
+      if (debouncedButtonState != prevButtonState) {
+        if (debouncedButtonState == 0) {
+          //goes to ramping down
+          state = 2;
+        }
+        prevButtonState = debouncedButtonState;
+      }
+        break;
+
+      case 2: //ramping down state
+      if (OCR2B == 0) { //duty cycle = 0
+        state = 0;
+      }
+      //decrement duty cycle
+      else {
+        OCR2B--;
+      }
+      //if button push then ramp up
+      if (debouncedButtonState != prevButtonState) {
+        if (debouncedButtonState == 0) {
+          //goes to ramping up
+          state = 1;
+        }
+        prevButtonState = debouncedButtonState;
+      }
+        break;
+    }
+  }
+}
+
+
+void setup() {
+  DDRB &= ~(1<<DDB0);
+  PORTB &= ~(1<<PB0);
+  DDRD |= (1<<DDD3);
+  PORTD |= (1<<PD3);
+  DDRB |= (1<<DDB5);
+  PORTB |= (1<<PD5);
+
+  //Serial.begin(9600);
+
+  PINB |= (1<<PINB0);
+  currentButtonStatus = PINB;
+
+  TCCR2A = 1<<COM2A1 | 0<<COM2A0 | 1<<COM2B1 | 0<<COM2B0 | 1<<WGM21 | 1<<WGM20;
+  TCCR2B = 0<<WGM22 | 1<<CS22 | 0<<CS21 | 0<<CS20;
+}
+
+
+void loop() {
+  BuiltinLEDHeartbeatHandler();
+  SwitchDebounceHandler();
+  PwmFadeToggle();
+}
